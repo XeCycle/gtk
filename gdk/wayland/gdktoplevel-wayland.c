@@ -38,6 +38,7 @@
 #include <wayland/xdg-shell-unstable-v6-client-protocol.h>
 #include <wayland/xdg-foreign-unstable-v2-client-protocol.h>
 #include <wayland/xdg-dialog-v1-client-protocol.h>
+#include "xdg-toplevel-tag-v1-client-protocol.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -2760,6 +2761,52 @@ gdk_wayland_toplevel_set_transient_for_exported (GdkToplevel *toplevel,
     }
 
   gdk_wayland_toplevel_sync_parent_of_imported (wayland_toplevel);
+
+  return TRUE;
+}
+
+/**
+ * gdk_wayland_toplevel_set_tag:
+ * @toplevel: (type GdkWaylandToplevel): the `GdkToplevel` to set a tag for
+ * @tag: A preferably human-readable tag 
+ *
+ * Set a tag to the toplevel allowing to uniquely identify it from the compositor
+ * side.
+ *
+ * The tag along with the application ID can be used to create a unique identifier
+ * per app / window.
+ *
+ * Note that the toplevel tag can only be set before it is mapped.
+ *
+ * Return value: %TRUE if the tag has been set, %FALSE if an error occurred.
+ */
+gboolean
+gdk_wayland_toplevel_set_tag (GdkToplevel *toplevel,
+                              const char  *tag)
+{
+  GdkWaylandToplevel *wayland_toplevel = GDK_WAYLAND_TOPLEVEL (toplevel);
+  GdkSurface *surface = GDK_SURFACE (toplevel);
+  GdkDisplay *display = gdk_surface_get_display (GDK_SURFACE (toplevel));
+  GdkWaylandDisplay *display_wayland = GDK_WAYLAND_DISPLAY (display);
+
+  g_return_val_if_fail (GDK_IS_WAYLAND_TOPLEVEL (toplevel), FALSE);
+  g_return_val_if_fail (GDK_IS_WAYLAND_DISPLAY (display), FALSE);
+
+  if (!display_wayland->xdg_toplevel_tag)
+    {
+      g_warning ("Server is missing xdg_toplevel_tag support");
+      return FALSE;
+    }
+
+  if (GDK_SURFACE_IS_MAPPED (surface))
+    {
+      g_warning ("Toplevel is already mapped, cannot set tag");
+      return FALSE;
+    }
+
+  xdg_toplevel_tag_manager_v1_set_toplevel_tag (display_wayland->xdg_toplevel_tag,
+                                                wayland_toplevel->display_server.xdg_toplevel,
+                                                tag);
 
   return TRUE;
 }
