@@ -137,6 +137,12 @@ if os_linux
   ]
 endif
 
+if os_win32
+  gtk_tests += [
+    ['testd3d12', ['testd3d12.c', 'gtkclipper.c']],
+  ]
+endif
+
 if x11_enabled
   gtk_tests += [['testerrors']]
 endif
@@ -153,5 +159,5 @@ foreach t: gtk_tests
     include_directories: [confinc, gdkinc],
     c_args: test_args + common_cflags,
     dependencies: [libgtk_dep, libm],
-  )
+    )
 endforeach
