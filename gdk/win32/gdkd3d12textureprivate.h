@@ -11,5 +11,7 @@ GdkTexture *            gdk_d3d12_texture_new_from_builder  (GdkD3d12TextureBuil
                                                              gpointer                 data,
                                                              GError                 **error);
 
+HANDLE                  gdk_d3d12_texture_get_handle        (GdkD3d12Texture         *self);
+
 G_END_DECLS
 
