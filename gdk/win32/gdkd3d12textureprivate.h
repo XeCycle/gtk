@@ -13,5 +13,9 @@ GdkTexture *            gdk_d3d12_texture_new_from_builder  (GdkD3d12TextureBuil
 
 HANDLE                  gdk_d3d12_texture_get_handle        (GdkD3d12Texture         *self);
 
+guint                   gdk_d3d12_texture_import_gl         (GdkD3d12Texture         *self,
+                                                             GdkGLContext            *context,
+                                                             guint                   *out_mem_id);
+
 G_END_DECLS
 
