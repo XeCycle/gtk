@@ -38,8 +38,9 @@
 #include <gst/gl/wayland/gstgldisplay_wayland.h>
 #endif
 
-#if GST_GL_HAVE_WINDOW_WIN32 && (GST_GL_HAVE_PLATFORM_WGL || GST_GL_HAVE_PLATFORM_EGL) && defined (GDK_WINDOWING_WIN32)
+#ifdef GDK_WINDOWING_WIN32
 #include <gdk/win32/gdkwin32.h>
+#include <gst/d3d12/gstd3d12.h>
 #endif
 
 #if GST_GL_HAVE_PLATFORM_EGL && (GST_GL_HAVE_WINDOW_WIN32 || GST_GL_HAVE_WINDOW_X11)
@@ -72,6 +73,16 @@ GST_DEBUG_CATEGORY (gtk_debug_gst_sink);
 
 #define MEMORY_TEXTURE_CAPS GST_VIDEO_CAPS_MAKE (FORMATS)
 
+#ifdef GDK_WINDOWING_WIN32
+#define D3D12_TEXTURE_CAPS \
+                     "video/x-raw(" GST_CAPS_FEATURE_MEMORY_D3D12_MEMORY "), " \
+                     "width = " GST_VIDEO_SIZE_RANGE ", " \
+                     "height = " GST_VIDEO_SIZE_RANGE ", " \
+                     "framerate = " GST_VIDEO_FPS_RANGE ", "
+#else
+#define D3D12_TEXTURE_CAPS ""
+#endif
+
 #define GL_TEXTURE_CAPS \
                      "video/x-raw(" GST_CAPS_FEATURE_MEMORY_GL_MEMORY "), " \
                      "format = (string) RGBA, " \
@@ -87,7 +98,8 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS(DMABUF_TEXTURE_CAPS "; "
-                    GL_TEXTURE_CAPS "; "
+                    D3D12_TEXTURE_CAPS ";"
+                    GL_TEXTURE_CAPS ";"
                     MEMORY_TEXTURE_CAPS)
     );
 
@@ -215,6 +227,11 @@ gtk_gst_sink_get_caps (GstBaseSink *bsink,
 
   unfiltered = gst_caps_new_empty ();
 
+#ifdef GDK_WINDOWING_WIN32
+  tmp = gst_caps_from_string (D3D12_TEXTURE_CAPS);
+  gst_caps_append (unfiltered, tmp);
+#endif
+
   if (self->gdk_display)
     {
       GdkDmabufFormats *formats = gdk_display_get_dmabuf_formats (self->gdk_display);
@@ -263,6 +280,18 @@ gtk_gst_sink_set_caps (GstBaseSink *bsink,
 
   GST_DEBUG_OBJECT (self, "set caps with %" GST_PTR_FORMAT, caps);
 
+#ifdef GDK_WINDOWING_WIN32
+  if (gst_caps_features_contains (gst_caps_get_features (caps, 0), GST_CAPS_FEATURE_MEMORY_D3D12_MEMORY))
+    {
+      GST_DEBUG_OBJECT (self, "using D3D12");
+    
+      gst_video_info_dma_drm_init (&self->drm_info);
+
+      if (!gst_video_info_from_caps (&self->v_info, caps))
+        return FALSE;
+    }
+  else
+#endif
   if (gst_video_is_dma_drm_caps (caps))
     {
       if (!gst_video_info_dma_drm_from_caps (&self->drm_info, caps))
@@ -322,6 +351,14 @@ gtk_gst_sink_propose_allocation (GstBaseSink *bsink,
       GST_DEBUG_OBJECT (bsink, "no caps specified");
       return FALSE;
     }
+
+#ifdef GDK_WINDOWING_WIN32
+  if (gst_caps_features_contains (gst_caps_get_features (caps, 0), GST_CAPS_FEATURE_MEMORY_D3D12_MEMORY))
+    {
+      gst_query_add_allocation_meta (query, GST_VIDEO_META_API_TYPE, NULL);
+      return TRUE;
+    }
+#endif
 
   if (gst_caps_features_contains (gst_caps_get_features (caps, 0), GST_CAPS_FEATURE_MEMORY_DMABUF))
     {
@@ -415,6 +452,7 @@ gtk_gst_sink_texture_from_buffer (GtkGstSink      *self,
                                   graphene_rect_t *viewport)
 {
   GstVideoFrame *frame = g_new (GstVideoFrame, 1);
+  GstMemory *mem;
   GdkTexture *texture;
 
   viewport->origin.x = 0;
@@ -422,7 +460,44 @@ gtk_gst_sink_texture_from_buffer (GtkGstSink      *self,
   viewport->size.width = GST_VIDEO_INFO_WIDTH (&self->v_info);
   viewport->size.height = GST_VIDEO_INFO_HEIGHT (&self->v_info);
 
-  if (gst_is_dmabuf_memory (gst_buffer_peek_memory (buffer, 0)))
+  mem = gst_buffer_peek_memory (buffer, 0);
+
+#ifdef GDK_WINDOWING_WIN32
+  if (gst_is_d3d12_memory (mem) &&
+      gst_video_frame_map (frame, &self->v_info, buffer, GST_MAP_READ_D3D12))
+    {
+      GdkD3d12TextureBuilder *builder;
+      const GstVideoMeta *vmeta = gst_buffer_get_video_meta (buffer);
+      GError *error = NULL;
+      int i;
+
+      g_return_val_if_fail (vmeta, NULL);
+
+      /* XXX: Remove once fences land */
+      gst_d3d12_memory_sync (GST_D3D12_MEMORY_CAST (mem));
+
+      builder = gdk_d3d12_texture_builder_new ();
+      gdk_d3d12_texture_builder_set_resource (builder, gst_d3d12_memory_get_resource_handle (GST_D3D12_MEMORY_CAST (mem)));
+      gdk_d3d12_texture_builder_set_color_state (builder, self->color_state);
+
+      texture = gdk_d3d12_texture_builder_build (builder,
+                                                 (GDestroyNotify) video_frame_free,
+                                                 frame,
+                                                 &error);
+      g_object_unref (builder);
+
+      if (!texture)
+        {
+          GST_ERROR_OBJECT (self, "Failed to create d3d12 texture: %s", error->message);
+          g_error_free (error);
+        }
+
+      *pixel_aspect_ratio = ((double) GST_VIDEO_INFO_PAR_N (&self->v_info) /
+                             (double) GST_VIDEO_INFO_PAR_D (&self->v_info));
+    }
+  else
+#endif
+  if (gst_is_dmabuf_memory (mem))
     {
       GdkDmabufTextureBuilder *builder = NULL;
       const GstVideoMeta *vmeta = gst_buffer_get_video_meta (buffer);
@@ -446,7 +521,6 @@ gtk_gst_sink_texture_from_buffer (GtkGstSink      *self,
 
       for (i = 0; i < vmeta->n_planes; i++)
         {
-          GstMemory *mem;
           guint mem_idx, length;
           gsize skip;
 
@@ -475,12 +549,15 @@ gtk_gst_sink_texture_from_buffer (GtkGstSink      *self,
       g_object_unref (builder);
 
       if (!texture)
-        GST_ERROR_OBJECT (self, "Failed to create dmabuf texture: %s", error->message);
+        {
+          GST_ERROR_OBJECT (self, "Failed to create dmabuf texture: %s", error->message);
+          g_error_free (error);
+        }
 
       *pixel_aspect_ratio = ((double) GST_VIDEO_INFO_PAR_N (&self->v_info) /
                              (double) GST_VIDEO_INFO_PAR_D (&self->v_info));
     }
-  else if (self->gdk_context &&
+  else if (gst_is_gl_memory (mem) &&
            gst_video_frame_map (frame, &self->v_info, buffer, GST_MAP_READ | GST_MAP_GL))
     {
       GstGLSyncMeta *sync_meta;
