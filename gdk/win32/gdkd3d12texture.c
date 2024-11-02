@@ -369,6 +369,12 @@ gdk_d3d12_texture_new_from_builder (GdkD3d12TextureBuilder *builder,
 #endif
 }
 
+ID3D12Resource *
+gdk_d3d12_texture_get_resource (GdkD3d12Texture *self)
+{
+  return self->resource;
+}
+
 G_LOCK_DEFINE_STATIC(handle_creation);
   
 HANDLE
