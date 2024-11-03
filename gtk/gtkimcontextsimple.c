@@ -766,12 +766,8 @@ gtk_im_context_simple_filter_keypress (GtkIMContext *context,
     have_hex_mods = TRUE;
   else
     have_hex_mods = (event->state & (hex_mod_mask)) == hex_mod_mask;
-  is_hex_start = event->keyval == GDK_KEY_U;
-  is_hex_end = (event->keyval == GDK_KEY_space ||
-                event->keyval == GDK_KEY_KP_Space ||
-                event->keyval == GDK_KEY_Return ||
-                event->keyval == GDK_KEY_ISO_Enter ||
-                event->keyval == GDK_KEY_KP_Enter);
+  is_hex_start = FALSE;
+  is_hex_end = FALSE;
   is_backspace = event->keyval == GDK_KEY_BackSpace;
   is_escape = event->keyval == GDK_KEY_Escape;
   hex_keyval = canonical_hex_keyval (event);
